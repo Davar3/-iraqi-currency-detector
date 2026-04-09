@@ -5,11 +5,11 @@
 
 const MODEL_PATH = "model/best.onnx";
 const INPUT_SIZE = 640;
-const CONF_THRESHOLD = 0.65;
+const CONF_THRESHOLD = 0.55;
 const IOU_THRESHOLD = 0.5;
 const NUM_CLASSES = 14;
-const SPEAK_COOLDOWN = 4000; // ms
-const CONFIRM_COUNT = 3; // require N consecutive detections before announcing
+const SPEAK_COOLDOWN = 2500; // ms
+const CONFIRM_COUNT = 2; // require N consecutive detections before announcing
 
 // Class names from the model (index → name)
 const CLASS_NAMES = {
@@ -338,8 +338,8 @@ async function detectLoop(videoEl, overlayCanvas, statusEl, resultEl) {
     console.error("Detection error:", e);
   }
 
-  // ~5 FPS
-  setTimeout(() => detectLoop(videoEl, overlayCanvas, statusEl, resultEl), 200);
+  // Run next frame as soon as possible (adaptive FPS)
+  setTimeout(() => detectLoop(videoEl, overlayCanvas, statusEl, resultEl), 100);
 }
 
 // ── Public API ──────────────────────────────────────────
