@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>كاشف العملة العراقية بالذكاء الاصطناعي</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.all.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            bg: '#050a18',
+            card: '#0c1a2e',
+            card2: '#0f2035',
+            cyan: { 400: '#22d3ee', 500: '#0ea5e9' },
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@400;600;700;800&display=swap');
+    body { font-family: 'Noto Kufi Arabic', Arial, sans-serif; }
+
+    /* Animated background grid */
+    .grid-bg {
+      background-image:
+        linear-gradient(rgba(14,165,233,0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(14,165,233,0.05) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+
+    /* Glow effects */
+    .glow-cyan { box-shadow: 0 0 40px rgba(14,165,233,0.15), 0 0 80px rgba(14,165,233,0.05); }
+    .glow-purple { box-shadow: 0 0 40px rgba(168,85,247,0.15), 0 0 80px rgba(168,85,247,0.05); }
+    .text-glow { text-shadow: 0 0 30px rgba(14,165,233,0.4); }
+
+    /* Gradient border */
+    .gradient-border {
+      border: 2px solid transparent;
+      background-clip: padding-box;
+      position: relative;
+    }
+    .gradient-border::before {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      border-radius: inherit;
+      background: linear-gradient(135deg, #0ea5e9, #a855f7);
+      z-index: -1;
+    }
+
+    /* Pulse animation */
+    @keyframes pulse-glow {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 1; }
+    }
+    .pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+
+    /* Camera container */
+    .camera-container { position: relative; }
+    .camera-container video { width: 100%; border-radius: 0.75rem; }
+    .camera-container canvas {
+      position: absolute; top: 0; left: 0;
+      width: 100%; height: 100%;
+      border-radius: 0.75rem;
+      pointer-events: none;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #050a18; }
+    ::-webkit-scrollbar-thumb { background: #0ea5e9; border-radius: 3px; }
+
+    /* Floating particles */
+    .particle {
+      position: absolute;
+      width: 4px; height: 4px;
+      background: #0ea5e9;
+      border-radius: 50%;
+      opacity: 0.3;
+      animation: float 6s ease-in-out infinite;
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0) scale(1); opacity: 0.3; }
+      50% { transform: translateY(-20px) scale(1.5); opacity: 0.6; }
+    }
+  </style>
+</head>
+<body class="bg-bg text-white grid-bg min-h-screen">
+
+  <!-- ═══ Gradient Top Bar ═══ -->
+  <div class="h-1 bg-gradient-to-l from-cyan-500 via-purple-500 to-cyan-500"></div>
+
+  <!-- ═══ HERO ═══ -->
+  <header class="relative overflow-hidden py-16 md:py-24 px-6">
+    <!-- Glow orbs -->
+    <div class="absolute top-0 left-0 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl"></div>
+    <div class="absolute bottom-0 right-0 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl"></div>
+
+    <div class="max-w-4xl mx-auto text-center relative z-10">
+      <img src="assets/SchoolLogo.jpg" alt="شعار المدرسة" class="w-20 h-20 rounded-full mx-auto mb-6 ring-2 ring-cyan-500/50">
+
+      <h1 class="text-4xl md:text-6xl font-extrabold mb-4">
+        <span class="text-glow bg-gradient-to-l from-cyan-400 to-purple-400 bg-clip-text text-transparent">
+          كاشف العملة العراقية
+        </span>
+        <br>
+        <span class="text-white/90 text-2xl md:text-3xl font-semibold">بالذكاء الاصطناعي</span>
+      </h1>
+
+      <div class="h-0.5 w-32 mx-auto bg-gradient-to-l from-cyan-500 to-purple-500 my-6"></div>
+
+      <p class="text-lg text-gray-400 mb-2 font-semibold">أحمد آلان عدنان</p>
+      <p class="text-sm text-gray-500">الصف السابع · ثانوية العراق للمتميزين</p>
+
+      <a href="#demo" class="inline-block mt-8 px-8 py-3 bg-gradient-to-l from-cyan-500 to-purple-600 rounded-full font-bold text-white hover:scale-105 transition-transform">
+        جرّب التطبيق الآن ↓
+      </a>
+    </div>
+  </header>
+
+  <!-- ═══ ABOUT ═══ -->
+  <section class="py-16 px-6">
+    <div class="max-w-5xl mx-auto">
+      <div class="bg-card/80 backdrop-blur rounded-2xl p-8 md:p-12 glow-cyan">
+        <div class="h-0.5 w-full bg-gradient-to-l from-cyan-500 to-purple-500 mb-8 rounded"></div>
+        <h2 class="text-2xl md:text-3xl font-bold text-cyan-400 mb-4">تخيّل أنك لا تستطيع أن ترى...</h2>
+        <p class="text-gray-400 text-lg leading-relaxed">
+          كيف ستعرف الفرق بين ورقة ٥,٠٠٠ دينار و ٢٥,٠٠٠ دينار؟
+          في العراق، يواجه أكثر من مليون شخص من المكفوفين وضعاف البصر هذا التحدي يومياً.
+          هذا المشروع يقدم حلاً ذكياً — تطبيق يستخدم الكاميرا والذكاء الاصطناعي للتعرف الفوري على العملة العراقية وقراءة قيمتها بالعربية.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ FEATURES ═══ -->
+  <section class="py-16 px-6">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-3xl font-bold text-center text-cyan-400 mb-12">مميزات التطبيق</h2>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <!-- Feature cards -->
+        <div class="bg-card/80 backdrop-blur rounded-xl p-6 border border-cyan-500/10 hover:border-cyan-500/30 transition">
+          <div class="w-12 h-12 bg-cyan-500/10 rounded-lg flex items-center justify-center mb-4 text-2xl">🧠</div>
+          <h3 class="text-lg font-bold text-white mb-2">ذكاء اصطناعي متقدم</h3>
+          <p class="text-gray-500 text-sm">يستخدم نموذج YOLOv8 المدرّب خصيصاً على العملة العراقية</p>
+        </div>
+        <div class="bg-card/80 backdrop-blur rounded-xl p-6 border border-purple-500/10 hover:border-purple-500/30 transition">
+          <div class="w-12 h-12 bg-purple-500/10 rounded-lg flex items-center justify-center mb-4 text-2xl">⚡</div>
+          <h3 class="text-lg font-bold text-white mb-2">كشف فوري</h3>
+          <p class="text-gray-500 text-sm">التعرف على العملة في أقل من ثانية مع عرض نسبة الثقة</p>
+        </div>
+        <div class="bg-card/80 backdrop-blur rounded-xl p-6 border border-cyan-500/10 hover:border-cyan-500/30 transition">
+          <div class="w-12 h-12 bg-cyan-500/10 rounded-lg flex items-center justify-center mb-4 text-2xl">🗣️</div>
+          <h3 class="text-lg font-bold text-white mb-2">نطق عربي</h3>
+          <p class="text-gray-500 text-sm">ينطق قيمة العملة بصوت عربي واضح بتسجيلات مخصصة</p>
+        </div>
+        <div class="bg-card/80 backdrop-blur rounded-xl p-6 border border-purple-500/10 hover:border-purple-500/30 transition">
+          <div class="w-12 h-12 bg-purple-500/10 rounded-lg flex items-center justify-center mb-4 text-2xl">💰</div>
+          <h3 class="text-lg font-bold text-white mb-2">٧ فئات كاملة</h3>
+          <p class="text-gray-500 text-sm">يدعم جميع فئات الدينار العراقي: ٢٥٠ إلى ٥٠,٠٠٠</p>
+        </div>
+        <div class="bg-card/80 backdrop-blur rounded-xl p-6 border border-cyan-500/10 hover:border-cyan-500/30 transition">
+          <div class="w-12 h-12 bg-cyan-500/10 rounded-lg flex items-center justify-center mb-4 text-2xl">📱</div>
+          <h3 class="text-lg font-bold text-white mb-2">يعمل في المتصفح</h3>
+          <p class="text-gray-500 text-sm">لا حاجة لتثبيت أي شيء — يعمل مباشرة من هاتفك</p>
+        </div>
+        <div class="bg-card/80 backdrop-blur rounded-xl p-6 border border-purple-500/10 hover:border-purple-500/30 transition">
+          <div class="w-12 h-12 bg-purple-500/10 rounded-lg flex items-center justify-center mb-4 text-2xl">🔒</div>
+          <h3 class="text-lg font-bold text-white mb-2">خصوصية تامة</h3>
+          <p class="text-gray-500 text-sm">كل شيء يعمل على جهازك — لا يتم إرسال أي صور لأي خادم</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ HOW IT WORKS ═══ -->
+  <section class="py-16 px-6">
+    <div class="max-w-5xl mx-auto">
+      <h2 class="text-3xl font-bold text-center text-cyan-400 mb-12">كيف يعمل؟</h2>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-card/80 rounded-xl p-5 text-center border border-cyan-500/10">
+          <div class="text-3xl mb-3">📷</div>
+          <div class="text-cyan-400 font-bold text-4xl mb-1">١</div>
+          <h3 class="font-bold text-sm mb-1">التقاط الصورة</h3>
+          <p class="text-gray-500 text-xs">الكاميرا تلتقط صورة حية</p>
+        </div>
+        <div class="bg-card/80 rounded-xl p-5 text-center border border-purple-500/10">
+          <div class="text-3xl mb-3">🧠</div>
+          <div class="text-purple-400 font-bold text-4xl mb-1">٢</div>
+          <h3 class="font-bold text-sm mb-1">تحليل ذكي</h3>
+          <p class="text-gray-500 text-xs">YOLOv8 يحلل الصورة</p>
+        </div>
+        <div class="bg-card/80 rounded-xl p-5 text-center border border-cyan-500/10">
+          <div class="text-3xl mb-3">✅</div>
+          <div class="text-cyan-400 font-bold text-4xl mb-1">٣</div>
+          <h3 class="font-bold text-sm mb-1">تحديد الفئة</h3>
+          <p class="text-gray-500 text-xs">يحدد نوع الورقة النقدية</p>
+        </div>
+        <div class="bg-card/80 rounded-xl p-5 text-center border border-purple-500/10">
+          <div class="text-3xl mb-3">🔊</div>
+          <div class="text-purple-400 font-bold text-4xl mb-1">٤</div>
+          <h3 class="font-bold text-sm mb-1">النطق بالعربية</h3>
+          <p class="text-gray-500 text-xs">ينطق قيمة العملة</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ LIVE DEMO ═══ -->
+  <section id="demo" class="py-16 px-6">
+    <div class="max-w-4xl mx-auto">
+      <h2 class="text-3xl font-bold text-center text-cyan-400 mb-4">جرّب بنفسك</h2>
+      <p class="text-center text-gray-500 mb-8">وجّه كاميرا هاتفك نحو ورقة نقدية عراقية</p>
+
+      <!-- Camera area -->
+      <div class="bg-card/80 backdrop-blur rounded-2xl p-4 md:p-6 glow-cyan">
+        <div class="camera-container bg-black rounded-xl overflow-hidden mb-4" style="min-height: 300px;">
+          <video id="camera" autoplay playsinline muted class="w-full rounded-xl" style="display:none;"></video>
+          <canvas id="overlay"></canvas>
+          <div id="camera-placeholder" class="flex items-center justify-center h-72 text-gray-600">
+            <div class="text-center">
+              <div class="text-5xl mb-4">📷</div>
+              <p>اضغط زر التشغيل لبدء الكاميرا</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="flex flex-wrap gap-3 justify-center mb-4">
+          <button id="btn-start" onclick="handleStart()"
+            class="px-6 py-3 bg-gradient-to-l from-cyan-500 to-purple-600 rounded-full font-bold hover:scale-105 transition-transform">
+            ▶ تشغيل الكاميرا
+          </button>
+          <button id="btn-stop" onclick="handleStop()" style="display:none;"
+            class="px-6 py-3 bg-red-600 rounded-full font-bold hover:scale-105 transition-transform">
+            ⏹ إيقاف
+          </button>
+          <button id="btn-flip" onclick="handleFlip()"
+            class="px-6 py-3 bg-card2 border border-purple-500/30 rounded-full font-bold hover:border-purple-500/60 transition">
+            🔄 تبديل الكاميرا
+          </button>
+          <button id="btn-sound" onclick="handleSound()"
+            class="px-6 py-3 bg-card2 border border-cyan-500/30 rounded-full font-bold hover:border-cyan-500/60 transition">
+            🔊 الصوت مفعّل
+          </button>
+        </div>
+
+        <!-- Status -->
+        <div id="status" class="text-center text-gray-500 text-sm mb-2">جاري تحميل النموذج...</div>
+        <div id="result" class="text-center text-lg min-h-[3rem]"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ DENOMINATIONS ═══ -->
+  <section class="py-16 px-6">
+    <div class="max-w-5xl mx-auto">
+      <h2 class="text-3xl font-bold text-center text-cyan-400 mb-8">الفئات المدعومة</h2>
+      <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-7 gap-3">
+        <div class="bg-card/80 rounded-xl p-4 text-center border border-green-500/20">
+          <div class="text-xl font-bold text-green-400">٢٥٠</div>
+          <div class="text-xs text-gray-500 mt-1">دينار</div>
+        </div>
+        <div class="bg-card/80 rounded-xl p-4 text-center border border-blue-500/20">
+          <div class="text-xl font-bold text-blue-400">٥٠٠</div>
+          <div class="text-xs text-gray-500 mt-1">دينار</div>
+        </div>
+        <div class="bg-card/80 rounded-xl p-4 text-center border border-purple-500/20">
+          <div class="text-xl font-bold text-purple-400">١,٠٠٠</div>
+          <div class="text-xs text-gray-500 mt-1">دينار</div>
+        </div>
+        <div class="bg-card/80 rounded-xl p-4 text-center border border-amber-500/20">
+          <div class="text-xl font-bold text-amber-400">٥,٠٠٠</div>
+          <div class="text-xs text-gray-500 mt-1">دينار</div>
+        </div>
+        <div class="bg-card/80 rounded-xl p-4 text-center border border-red-500/20">
+          <div class="text-xl font-bold text-red-400">١٠,٠٠٠</div>
+          <div class="text-xs text-gray-500 mt-1">دينار</div>
+        </div>
+        <div class="bg-card/80 rounded-xl p-4 text-center border border-cyan-500/20">
+          <div class="text-xl font-bold text-cyan-400">٢٥,٠٠٠</div>
+          <div class="text-xs text-gray-500 mt-1">دينار</div>
+        </div>
+        <div class="bg-card/80 rounded-xl p-4 text-center border border-pink-500/20">
+          <div class="text-xl font-bold text-pink-400">٥٠,٠٠٠</div>
+          <div class="text-xs text-gray-500 mt-1">دينار</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ QR CODE ═══ -->
+  <section class="py-16 px-6">
+    <div class="max-w-md mx-auto text-center">
+      <h2 class="text-2xl font-bold text-cyan-400 mb-4">شارك المشروع</h2>
+      <p class="text-gray-500 mb-6">امسح رمز QR لفتح الموقع على هاتفك</p>
+      <div class="bg-white rounded-2xl p-6 inline-block">
+        <canvas id="qrcode"></canvas>
+      </div>
+      <p id="site-url" class="text-sm text-gray-600 mt-4 dir-ltr" dir="ltr"></p>
+    </div>
+  </section>
+
+  <!-- ═══ TECH STACK ═══ -->
+  <section class="py-16 px-6">
+    <div class="max-w-4xl mx-auto">
+      <h2 class="text-3xl font-bold text-center text-cyan-400 mb-8">التقنيات المستخدمة</h2>
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div class="bg-card/80 rounded-xl p-4 text-center border border-cyan-500/10">
+          <div class="text-cyan-400 font-bold mb-1">Python</div>
+          <div class="text-gray-500 text-xs">لغة البرمجة</div>
+        </div>
+        <div class="bg-card/80 rounded-xl p-4 text-center border border-purple-500/10">
+          <div class="text-purple-400 font-bold mb-1">YOLOv8</div>
+          <div class="text-gray-500 text-xs">الذكاء الاصطناعي</div>
+        </div>
+        <div class="bg-card/80 rounded-xl p-4 text-center border border-cyan-500/10">
+          <div class="text-cyan-400 font-bold mb-1">ONNX Runtime</div>
+          <div class="text-gray-500 text-xs">تشغيل النموذج</div>
+        </div>
+        <div class="bg-card/80 rounded-xl p-4 text-center border border-purple-500/10">
+          <div class="text-purple-400 font-bold mb-1">OpenCV</div>
+          <div class="text-gray-500 text-xs">معالجة الصور</div>
+        </div>
+        <div class="bg-card/80 rounded-xl p-4 text-center border border-cyan-500/10">
+          <div class="text-cyan-400 font-bold mb-1">macOS Native</div>
+          <div class="text-gray-500 text-xs">تطبيق سطح المكتب</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ FOOTER ═══ -->
+  <footer class="py-8 px-6 border-t border-cyan-500/10">
+    <div class="max-w-4xl mx-auto text-center">
+      <p class="text-gray-600 text-sm">أحمد آلان عدنان · الصف السابع · ثانوية العراق للمتميزين</p>
+      <p class="text-gray-700 text-xs mt-2">كاشف العملة العراقية بالذكاء الاصطناعي © ٢٠٢٦</p>
+    </div>
+  </footer>
+
+  <div class="h-1 bg-gradient-to-l from-cyan-500 via-purple-500 to-cyan-500"></div>
+
+  <!-- ═══ SCRIPTS ═══ -->
+  <script src="detect.js"></script>
+  <script>
+    const videoEl = document.getElementById("camera");
+    const overlayEl = document.getElementById("overlay");
+    const statusEl = document.getElementById("status");
+    const resultEl = document.getElementById("result");
+    const placeholder = document.getElementById("camera-placeholder");
+
+    // Load model on page load
+    loadModel(statusEl);
+
+    // Generate QR code
+    const siteUrl = window.location.href;
+    document.getElementById("site-url").textContent = siteUrl;
+    QRCode.toCanvas(document.getElementById("qrcode"), siteUrl, {
+      width: 200, margin: 0,
+      color: { dark: "#0ea5e9", light: "#ffffff" },
+    });
+
+    async function handleStart() {
+      document.getElementById("btn-start").style.display = "none";
+      document.getElementById("btn-stop").style.display = "inline-block";
+      placeholder.style.display = "none";
+      videoEl.style.display = "block";
+      await startDetection(videoEl, overlayEl, statusEl, resultEl);
+    }
+
+    function handleStop() {
+      document.getElementById("btn-start").style.display = "inline-block";
+      document.getElementById("btn-stop").style.display = "none";
+      placeholder.style.display = "flex";
+      videoEl.style.display = "none";
+      stopDetection(videoEl);
+      resultEl.textContent = "";
+      statusEl.textContent = "تم إيقاف الكاميرا";
+    }
+
+    function handleSound() {
+      const on = toggleSound();
+      const btn = document.getElementById("btn-sound");
+      btn.textContent = on ? "🔊 الصوت مفعّل" : "🔇 الصوت مغلق";
+    }
+
+    async function handleFlip() {
+      const label = await flipCamera(videoEl);
+      document.getElementById("btn-flip").textContent = "🔄 الكاميرا: " + label;
+    }
+  </script>
+</body>
+</html>
