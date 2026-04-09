@@ -1,22 +1,26 @@
 /**
  * Iraqi Currency Detector — Browser ONNX Inference Engine
- * Runs YOLOv8 model in the browser via ONNX Runtime Web.
  */
 
 const MODEL_PATH = "model/best.onnx";
 const INPUT_SIZE = 640;
-const CONF_THRESHOLD = 0.55;
-const IOU_THRESHOLD = 0.5;
-const NUM_CLASSES = 14;
+const CONF_THRESHOLD = 0.45;
+const IOU_THRESHOLD = 0.45;
 const SPEAK_COOLDOWN = 2500; // ms
-const CONFIRM_COUNT = 2; // require N consecutive detections before announcing
 
-// Class names from the model (index → name)
-const CLASS_NAMES = {
-  0: "10000ar", 1: "10000en", 2: "1000ar", 3: "1000en",
-  4: "25000ar", 5: "25000en", 6: "250ar", 7: "250en",
-  8: "50000ar", 9: "50000en", 10: "5000ar", 11: "5000en",
-  12: "500ar", 13: "500en",
+// 14 model classes → 7 denominations (merge ar + en pairs)
+const CLASS_TO_DENOM = {
+  0: "10000", 1: "10000", 2: "1000", 3: "1000",
+  4: "25000", 5: "25000", 6: "250",  7: "250",
+  8: "50000", 9: "50000", 10: "5000", 11: "5000",
+  12: "500",  13: "500",
+};
+
+// Pairs: for each denomination, which class indices to merge
+const DENOM_CLASSES = {
+  "10000": [0, 1],  "1000": [2, 3],   "25000": [4, 5],
+  "250": [6, 7],    "50000": [8, 9],   "5000": [10, 11],
+  "500": [12, 13],
 };
 
 const DENOM_DISPLAY = {
@@ -26,57 +30,83 @@ const DENOM_DISPLAY = {
 };
 
 const DENOM_EN = {
-  "250": "250 IQD", "500": "500 IQD", "1000": "1,000 IQD",
-  "5000": "5,000 IQD", "10000": "10,000 IQD",
-  "25000": "25,000 IQD", "50000": "50,000 IQD",
-};
-
-const DENOM_SPEECH = {
-  "250": "مئتان وخمسون دينار",
-  "500": "خمسمائة دينار",
-  "1000": "ألف دينار",
-  "5000": "خمسة آلاف دينار",
-  "10000": "عشرة آلاف دينار",
-  "25000": "خمسة وعشرون ألف دينار",
-  "50000": "خمسون ألف دينار",
+  "250": "250", "500": "500", "1000": "1,000",
+  "5000": "5,000", "10000": "10,000",
+  "25000": "25,000", "50000": "50,000",
 };
 
 const BOX_COLORS = {
-  "250": "#22c55e", "500": "#3b82f6", "1000": "#a855f7",
-  "5000": "#f59e0b", "10000": "#ef4444", "25000": "#0ea5e9", "50000": "#ec4899",
+  "250": [34, 197, 94], "500": [59, 130, 246], "1000": [168, 85, 247],
+  "5000": [245, 158, 11], "10000": [239, 68, 68], "25000": [14, 165, 233],
+  "50000": [236, 72, 153],
 };
 
 let session = null;
 let isRunning = false;
 let lastSpoken = {};
 let soundOn = true;
-let detStreak = {}; // denom -> consecutive count
-let facingMode = "environment"; // "environment" = back, "user" = front
+let audioUnlocked = false;
+let facingMode = "environment";
+
+// ── Audio setup ─────────────────────────────────────────
+const voiceAudio = {};
+["250", "500", "1000", "5000", "10000", "25000", "50000"].forEach((d) => {
+  const a = new Audio(`assets/${d}.m4a`);
+  a.preload = "auto";
+  voiceAudio[d] = a;
+});
+
+// Unlock audio on first user tap (mobile requirement)
+function unlockAudio() {
+  if (audioUnlocked) return;
+  const dummy = new AudioContext();
+  dummy.resume().then(() => dummy.close());
+  // Touch each audio element to unlock
+  Object.values(voiceAudio).forEach((a) => {
+    a.play().then(() => a.pause()).catch(() => {});
+    a.currentTime = 0;
+  });
+  audioUnlocked = true;
+}
+
+let isPlaying = false;
+
+function speakDenom(denom) {
+  if (!soundOn || isPlaying) return;
+  const now = Date.now();
+  if (now - (lastSpoken[denom] || 0) < SPEAK_COOLDOWN) return;
+  lastSpoken[denom] = now;
+
+  const audio = voiceAudio[denom];
+  if (audio) {
+    isPlaying = true;
+    audio.currentTime = 0;
+    audio.play().then(() => {
+      audio.onended = () => { isPlaying = false; };
+    }).catch(() => {
+      isPlaying = false;
+    });
+  }
+}
 
 // ── Load Model ──────────────────────────────────────────
 async function loadModel(statusEl) {
   statusEl.textContent = "جاري تحميل نموذج الذكاء الاصطناعي... (12 MB)";
   try {
-    // Configure WASM paths for CDN
     ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/";
-
-    // Try WASM first (most reliable), then WebGL
     session = await ort.InferenceSession.create(MODEL_PATH, {
       executionProviders: ["wasm"],
     });
 
-    // Warm up with a dummy run
     statusEl.textContent = "تجهيز النموذج...";
     const warmup = new Float32Array(3 * INPUT_SIZE * INPUT_SIZE);
-    const warmupTensor = new ort.Tensor("float32", warmup, [1, 3, INPUT_SIZE, INPUT_SIZE]);
-    await session.run({ images: warmupTensor });
+    await session.run({ images: new ort.Tensor("float32", warmup, [1, 3, INPUT_SIZE, INPUT_SIZE]) });
 
     statusEl.textContent = "النموذج جاهز — اضغط زر التشغيل ✅";
-    console.log("Model loaded and warmed up successfully");
     return true;
   } catch (e) {
     statusEl.textContent = "فشل تحميل النموذج: " + e.message;
-    console.error("Model load error:", e);
+    console.error(e);
     return false;
   }
 }
@@ -113,7 +143,6 @@ function preprocess(videoEl) {
   canvas.height = INPUT_SIZE;
   const ctx = canvas.getContext("2d");
 
-  // Letterbox: fit video into 640x640 maintaining aspect ratio
   const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
   const scale = Math.min(INPUT_SIZE / vw, INPUT_SIZE / vh);
   const nw = Math.round(vw * scale), nh = Math.round(vh * scale);
@@ -123,61 +152,58 @@ function preprocess(videoEl) {
   ctx.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
   ctx.drawImage(videoEl, dx, dy, nw, nh);
 
-  const imgData = ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
-  const pixels = imgData.data;
-
-  // Convert to CHW float32 normalized [0,1]
+  const pixels = ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
   const float32 = new Float32Array(3 * INPUT_SIZE * INPUT_SIZE);
   const area = INPUT_SIZE * INPUT_SIZE;
   for (let i = 0; i < area; i++) {
-    float32[i] = pixels[i * 4] / 255;             // R
-    float32[area + i] = pixels[i * 4 + 1] / 255;  // G
-    float32[2 * area + i] = pixels[i * 4 + 2] / 255; // B
+    float32[i] = pixels[i * 4] / 255;
+    float32[area + i] = pixels[i * 4 + 1] / 255;
+    float32[2 * area + i] = pixels[i * 4 + 2] / 255;
   }
 
   return {
     tensor: new ort.Tensor("float32", float32, [1, 3, INPUT_SIZE, INPUT_SIZE]),
-    scale, dx, dy, vw, vh,
+    scale, dx, dy,
   };
 }
 
-// ── Postprocessing (YOLOv8 output) ──────────────────────
+// ── Postprocessing — merge ar+en into 7 denominations ───
 function postprocess(output, meta) {
-  // output shape: [1, 18, 8400] → transpose to [8400, 18]
   const data = output.data;
-  const numBoxes = 8400;
-  const numValues = 4 + NUM_CLASSES; // 18
+  const N = 8400; // number of boxes
 
   const boxes = [];
-  for (let i = 0; i < numBoxes; i++) {
-    // Extract class scores (indices 4-17)
-    let maxScore = 0, maxClass = 0;
-    for (let c = 0; c < NUM_CLASSES; c++) {
-      const score = data[(4 + c) * numBoxes + i];
-      if (score > maxScore) {
-        maxScore = score;
-        maxClass = c;
+  for (let i = 0; i < N; i++) {
+    // For each box, compute merged denomination score
+    // Take the MAX score across ar+en pairs for each denomination
+    let bestDenom = null, bestScore = 0;
+
+    for (const [denom, classIds] of Object.entries(DENOM_CLASSES)) {
+      // Merge: take the max of the ar and en class scores
+      let denomScore = 0;
+      for (const cid of classIds) {
+        const s = data[(4 + cid) * N + i];
+        if (s > denomScore) denomScore = s;
+      }
+      if (denomScore > bestScore) {
+        bestScore = denomScore;
+        bestDenom = denom;
       }
     }
 
-    if (maxScore < CONF_THRESHOLD) continue;
+    if (bestScore < CONF_THRESHOLD || !bestDenom) continue;
 
-    // Extract box (cx, cy, w, h) in model coords (640x640)
-    const cx = data[0 * numBoxes + i];
-    const cy = data[1 * numBoxes + i];
-    const w = data[2 * numBoxes + i];
-    const h = data[3 * numBoxes + i];
+    const cx = data[0 * N + i];
+    const cy = data[1 * N + i];
+    const w  = data[2 * N + i];
+    const h  = data[3 * N + i];
 
-    // Convert to original video coords
     const x1 = (cx - w / 2 - meta.dx) / meta.scale;
     const y1 = (cy - h / 2 - meta.dy) / meta.scale;
     const x2 = (cx + w / 2 - meta.dx) / meta.scale;
     const y2 = (cy + h / 2 - meta.dy) / meta.scale;
 
-    const raw = CLASS_NAMES[maxClass] || String(maxClass);
-    const denom = raw.replace("ar", "").replace("en", "");
-
-    boxes.push({ x1, y1, x2, y2, score: maxScore, classId: maxClass, denom, raw });
+    boxes.push({ x1, y1, x2, y2, score: bestScore, denom: bestDenom });
   }
 
   return nms(boxes, IOU_THRESHOLD);
@@ -187,31 +213,28 @@ function postprocess(output, meta) {
 function nms(boxes, threshold) {
   boxes.sort((a, b) => b.score - a.score);
   const kept = [];
-  const suppressed = new Set();
-
+  const used = new Set();
   for (let i = 0; i < boxes.length; i++) {
-    if (suppressed.has(i)) continue;
+    if (used.has(i)) continue;
     kept.push(boxes[i]);
     for (let j = i + 1; j < boxes.length; j++) {
-      if (suppressed.has(j)) continue;
-      if (iou(boxes[i], boxes[j]) > threshold) {
-        suppressed.add(j);
-      }
+      if (used.has(j)) continue;
+      if (iou(boxes[i], boxes[j]) > threshold) used.add(j);
     }
   }
   return kept;
 }
 
 function iou(a, b) {
-  const x1 = Math.max(a.x1, b.x1), y1 = Math.max(a.y1, b.y1);
-  const x2 = Math.min(a.x2, b.x2), y2 = Math.min(a.y2, b.y2);
-  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-  const areaA = (a.x2 - a.x1) * (a.y2 - a.y1);
-  const areaB = (b.x2 - b.x1) * (b.y2 - b.y1);
-  return inter / (areaA + areaB - inter);
+  const ix1 = Math.max(a.x1, b.x1), iy1 = Math.max(a.y1, b.y1);
+  const ix2 = Math.min(a.x2, b.x2), iy2 = Math.min(a.y2, b.y2);
+  const inter = Math.max(0, ix2 - ix1) * Math.max(0, iy2 - iy1);
+  const aA = (a.x2 - a.x1) * (a.y2 - a.y1);
+  const aB = (b.x2 - b.x1) * (b.y2 - b.y1);
+  return inter / (aA + aB - inter);
 }
 
-// ── Drawing ─────────────────────────────────────────────
+// ── Drawing (clean rounded style) ───────────────────────
 function drawDetections(ctx, detections, videoEl) {
   const cw = ctx.canvas.width, ch = ctx.canvas.height;
   const sx = cw / videoEl.videoWidth, sy = ch / videoEl.videoHeight;
@@ -219,60 +242,54 @@ function drawDetections(ctx, detections, videoEl) {
   detections.forEach((det) => {
     const x = det.x1 * sx, y = det.y1 * sy;
     const w = (det.x2 - det.x1) * sx, h = (det.y2 - det.y1) * sy;
-    const color = BOX_COLORS[det.denom] || "#0ea5e9";
+    const [r, g, b] = BOX_COLORS[det.denom] || [14, 165, 233];
+    const color = `rgb(${r},${g},${b})`;
 
-    // Box
+    // Semi-transparent fill
+    ctx.fillStyle = `rgba(${r},${g},${b},0.12)`;
+    ctx.beginPath();
+    roundRect(ctx, x, y, w, h, 8);
+    ctx.fill();
+
+    // Border with glow
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 10;
     ctx.strokeStyle = color;
-    ctx.lineWidth = 3;
-    ctx.strokeRect(x, y, w, h);
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    roundRect(ctx, x, y, w, h, 8);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
 
-    // Label background
-    const label = `${DENOM_DISPLAY[det.denom] || det.denom}  ${Math.round(det.score * 100)}%`;
-    ctx.font = "bold 16px Arial";
+    // Label pill
+    const pct = Math.round(det.score * 100);
+    const label = `${DENOM_DISPLAY[det.denom]}  ${pct}%`;
+    ctx.font = "bold 14px Arial";
     const tw = ctx.measureText(label).width;
-    ctx.fillStyle = color;
-    ctx.fillRect(x, y - 24, tw + 12, 24);
+    const lx = x, ly = y - 28;
+    const lw = tw + 16, lh = 24;
 
-    // Label text
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    roundRect(ctx, lx, ly, lw, lh, 6);
+    ctx.fill();
+
     ctx.fillStyle = "#fff";
-    ctx.fillText(label, x + 6, y - 6);
+    ctx.fillText(label, lx + 8, ly + 17);
   });
 }
 
-// ── Voice playback (custom recordings) ──────────────────
-// Preload audio files
-const voiceAudio = {};
-["250", "500", "1000", "5000", "10000", "25000", "50000"].forEach((d) => {
-  const audio = new Audio(`assets/${d}.m4a`);
-  audio.preload = "auto";
-  voiceAudio[d] = audio;
-});
-
-let isPlaying = false;
-
-function speakDenom(denom) {
-  if (!soundOn || isPlaying) return;
-  const now = Date.now();
-  if (now - (lastSpoken[denom] || 0) < SPEAK_COOLDOWN) return;
-  lastSpoken[denom] = now;
-
-  const audio = voiceAudio[denom];
-  if (audio) {
-    isPlaying = true;
-    audio.currentTime = 0;
-    audio.play().then(() => {
-      audio.onended = () => { isPlaying = false; };
-    }).catch(() => {
-      isPlaying = false;
-      // Fallback to Web Speech API if audio fails
-      if ("speechSynthesis" in window) {
-        const utt = new SpeechSynthesisUtterance(DENOM_SPEECH[denom] || denom);
-        utt.lang = "ar-SA";
-        utt.rate = 0.9;
-        speechSynthesis.speak(utt);
-      }
-    });
-  }
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
 }
 
 // ── Detection Loop ──────────────────────────────────────
@@ -287,64 +304,35 @@ async function detectLoop(videoEl, overlayCanvas, statusEl, resultEl) {
   try {
     const { tensor, ...meta } = preprocess(videoEl);
     const results = await session.run({ images: tensor });
-    const output = results["output0"];
-    const detections = postprocess(output, meta);
-
-    // Debug logging (first few frames only)
-    if (!window._debugCount) window._debugCount = 0;
-    if (window._debugCount < 5) {
-      console.log(`Frame ${window._debugCount}: ${detections.length} detections, output shape: [${output.dims}]`);
-      if (detections.length > 0) {
-        detections.forEach(d => console.log(`  ${d.denom}: ${(d.score*100).toFixed(1)}%`));
-      }
-      window._debugCount++;
-    }
+    const detections = postprocess(results["output0"], meta);
 
     drawDetections(ctx, detections, videoEl);
 
-    // Update streak counts for smoothing
     if (detections.length === 0) {
-      detStreak = {};
-      resultEl.textContent = "لم يتم الكشف عن أي عملة — وجّه الكاميرا نحو ورقة نقدية";
+      resultEl.textContent = "وجّه الكاميرا نحو ورقة نقدية عراقية";
     } else {
-      const currentDenoms = new Set(detections.map(d => d.denom));
-      // Reset unseen, increment seen
-      for (const d of Object.keys(detStreak)) {
-        if (!currentDenoms.has(d)) detStreak[d] = 0;
-      }
-      for (const d of currentDenoms) {
-        detStreak[d] = (detStreak[d] || 0) + 1;
-      }
-
-      // Only show confirmed detections (seen CONFIRM_COUNT times in a row)
-      const confirmed = detections.filter(d => (detStreak[d.denom] || 0) >= CONFIRM_COUNT);
-
-      if (confirmed.length === 0) {
-        resultEl.textContent = "جاري التحقق... ثبّت الورقة أمام الكاميرا";
-      } else {
-        let total = 0;
-        const parts = confirmed.map((d) => {
-          total += parseInt(d.denom) || 0;
-          speakDenom(d.denom);
-          return `${DENOM_DISPLAY[d.denom] || d.denom} (${DENOM_EN[d.denom]}, ${Math.round(d.score * 100)}%)`;
-        });
-        resultEl.innerHTML = `<span class="text-cyan-400 font-bold">${parts.join("  ·  ")}</span>`;
-        if (total > 0) {
-          resultEl.innerHTML += `<br><span class="text-purple-400">المجموع: ${total.toLocaleString()} دينار عراقي</span>`;
-        }
+      let total = 0;
+      const parts = detections.map((d) => {
+        total += parseInt(d.denom) || 0;
+        speakDenom(d.denom);
+        return `${DENOM_DISPLAY[d.denom]} (${DENOM_EN[d.denom]} IQD, ${Math.round(d.score * 100)}%)`;
+      });
+      resultEl.innerHTML = `<span class="text-cyan-400 font-bold">${parts.join("  ·  ")}</span>`;
+      if (total > 0) {
+        resultEl.innerHTML += `<br><span class="text-purple-400">المجموع: ${total.toLocaleString()} دينار عراقي</span>`;
       }
     }
   } catch (e) {
     console.error("Detection error:", e);
   }
 
-  // Run next frame as soon as possible (adaptive FPS)
-  setTimeout(() => detectLoop(videoEl, overlayCanvas, statusEl, resultEl), 100);
+  setTimeout(() => detectLoop(videoEl, overlayCanvas, statusEl, resultEl), 150);
 }
 
 // ── Public API ──────────────────────────────────────────
 async function startDetection(videoEl, overlayCanvas, statusEl, resultEl) {
   if (isRunning) return;
+  unlockAudio(); // unlock on user gesture
   statusEl.textContent = "جاري تشغيل الكاميرا...";
   try {
     await startCamera(videoEl);
